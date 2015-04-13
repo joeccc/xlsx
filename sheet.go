@@ -105,7 +105,9 @@ func (s *Sheet) SetColWidth(startcol, endcol int, width float64) error {
 // Insert an image to an anchor cell.
 //
 // imagePath - path of the image
+//
 // row, col - row and col of the top left cell, 0-based
+//
 // rowCount, colCount - at least 1 must be non-zero, if
 // both set, the image may change in aspect ratio,
 // otherwise the other one will be calculated
