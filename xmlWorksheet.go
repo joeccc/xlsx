@@ -2,6 +2,7 @@ package xlsx
 
 import (
 	"encoding/xml"
+	"fmt"
 )
 
 // xlsxWorksheet directly maps the worksheet element in the namespace
@@ -10,16 +11,18 @@ import (
 // as I need.
 type xlsxWorksheet struct {
 	XMLName       xml.Name          `xml:"http://schemas.openxmlformats.org/spreadsheetml/2006/main worksheet"`
+	NameSpace_R   string            `xml:"xmlns:r,attr"`
 	SheetPr       xlsxSheetPr       `xml:"sheetPr"`
 	Dimension     xlsxDimension     `xml:"dimension"`
 	SheetViews    xlsxSheetViews    `xml:"sheetViews"`
 	SheetFormatPr xlsxSheetFormatPr `xml:"sheetFormatPr"`
-	Cols          xlsxCols          `xml:"cols"`
+	Cols          *xlsxCols         `xml:"cols,omitempty"`
 	SheetData     xlsxSheetData     `xml:"sheetData"`
 	PrintOptions  xlsxPrintOptions  `xml:"printOptions"`
 	PageMargins   xlsxPageMargins   `xml:"pageMargins"`
-	PageSetUp     xlsxPageSetUp     `xml:"pageSetup"`
-	HeaderFooter  xlsxHeaderFooter  `xml:"headerFooter"`
+	Drawing       *worksheetDrawing `xml:"drawing,omitempty"`
+	PageSetUp     xlsxPageSetUp     `xml:"-"`
+	HeaderFooter  xlsxHeaderFooter  `xml:"-"`
 }
 
 // xlsxHeaderFooter directly maps the headerFooter element in the namespace
@@ -94,6 +97,16 @@ type xlsxPageMargins struct {
 	Bottom float64 `xml:"bottom,attr"`
 	Header float64 `xml:"header,attr"`
 	Footer float64 `xml:"footer,attr"`
+}
+
+type worksheetDrawing struct {
+	DrawingIdStr string `xml:"r:id,attr"`
+	DrawingId    int    `xml:"-"`
+}
+
+func (d *worksheetDrawing) SetId(id int) {
+	d.DrawingId = id
+	d.DrawingIdStr = fmt.Sprintf("rId%d", id)
 }
 
 // xlsxSheetFormatPr directly maps the sheetFormatPr element in the namespace
@@ -238,7 +251,7 @@ type xlsxC struct {
 	F *xlsxF `xml:"f,omitempty"`      // Formula
 }
 
-// xlsxC directly maps the f element in the namespace
+// xlsxF directly maps the f element in the namespace
 // http://schemas.openxmlformats.org/sprceadsheetml/2006/main -
 // currently I have not checked it for completeness - it does as much
 // as I need.
@@ -249,10 +262,15 @@ type xlsxF struct {
 	Si      int    `xml:"si,attr,omitempty"`  // Shared formula index
 }
 
+type xlsxWorksheetDrawing struct {
+	Id int `xml:"r:id,attr"`
+}
+
 // Create a new XLSX Worksheet with default values populated.
 // Strictly for internal use only!
 func newXlsxWorksheet() (worksheet *xlsxWorksheet) {
 	worksheet = &xlsxWorksheet{}
+	worksheet.NameSpace_R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 	worksheet.SheetPr.FilterMode = false
 	worksheet.SheetPr.PageSetUpPr = make([]xlsxPageSetUpPr, 1)
 	worksheet.SheetPr.PageSetUpPr[0] = xlsxPageSetUpPr{FitToPage: false}
@@ -311,5 +329,6 @@ func newXlsxWorksheet() (worksheet *xlsxWorksheet) {
 	worksheet.HeaderFooter.OddHeader[0] = xlsxOddHeader{Content: `&C&"Times New Roman,Regular"&12&A`}
 	worksheet.HeaderFooter.OddFooter = make([]xlsxOddFooter, 1)
 	worksheet.HeaderFooter.OddFooter[0] = xlsxOddFooter{Content: `&C&"Times New Roman,Regular"&12Page &P`}
+	worksheet.Drawing = new(worksheetDrawing)
 	return
 }

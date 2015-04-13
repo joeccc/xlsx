@@ -2,20 +2,31 @@ package xlsx
 
 import (
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
+	"io/ioutil"
+	"log"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 // Sheet is a high level structure intended to provide user access to
 // the contents of a particular sheet within an XLSX file.
 type Sheet struct {
-	Name   string
-	File   *File
-	Rows   []*Row
-	Cols   []*Col
-	MaxRow int
-	MaxCol int
-	Hidden bool
+	Name       string
+	File       *File
+	Rows       []*Row
+	Cols       []*Col
+	MaxRow     int
+	MaxCol     int
+	Hidden     bool
 	SheetViews []SheetView
+	Drawings   []Drawing
+	Index      int
 }
 
 type SheetView struct {
@@ -91,6 +102,54 @@ func (s *Sheet) SetColWidth(startcol, endcol int, width float64) error {
 	return nil
 }
 
+// Insert an image to an anchor cell.
+//
+// imagePath - path of the image
+// row, col - row and col of the top left cell, 0-based
+// rowCount, colCount - at least 1 must be non-zero, if
+// both set, the image may change in aspect ratio,
+// otherwise the other one will be calculated
+//
+func (s *Sheet) InsertImage(imagePath string, row, col, rowCount, colCount int) error {
+	if imageFileData, err := ioutil.ReadFile(imagePath); err == nil {
+		if reader, err := os.Open(imagePath); err == nil {
+			if im, _, err := image.DecodeConfig(reader); err == nil {
+				var imageType ImageType
+				switch strings.ToLower(filepath.Ext(imagePath)) {
+				case ".jpg", ".jpeg":
+					imageType = IMAGE_TYPE_JPG
+				case ".png":
+					imageType = IMAGE_TYPE_PNG
+				case ".gif":
+					imageType = IMAGE_TYPE_GIF
+				}
+				drawing := Drawing{
+					s,
+					imageFileData,
+					imageType,
+					DrawingCell{
+						row,
+						col,
+					},
+					rowCount,
+					colCount,
+					im.Width,
+					im.Height,
+				}
+				s.Drawings = append(s.Drawings, drawing)
+				log.Println("imageType", drawing.ImageType, "width:", drawing.Width, "height:", drawing.Height)
+			} else {
+				return err
+			}
+		} else {
+			return err
+		}
+	} else {
+		return err
+	}
+	return nil
+}
+
 // Dump sheet to it's XML representation, intended for internal use only
 func (s *Sheet) makeXLSXSheet(refTable *RefTable, styles *xlsxStyleSheet) *xlsxWorksheet {
 	worksheet := newXlsxWorksheet()
@@ -154,20 +213,23 @@ func (s *Sheet) makeXLSXSheet(refTable *RefTable, styles *xlsxStyleSheet) *xlsxW
 		xSheet.Row = append(xSheet.Row, xRow)
 	}
 
-	worksheet.Cols = xlsxCols{Col: []xlsxCol{}}
-	for _, col := range s.Cols {
-		if col.Width == 0 {
-			col.Width = ColWidth
+	if len(s.Cols) > 0 {
+		worksheet.Cols = &xlsxCols{Col: []xlsxCol{}}
+		for _, col := range s.Cols {
+			if col.Width == 0 {
+				col.Width = ColWidth
+			}
+			worksheet.Cols.Col = append(worksheet.Cols.Col,
+				xlsxCol{Min: col.Min,
+					Max:       col.Max,
+					Hidden:    col.Hidden,
+					Width:     col.Width,
+					Collapsed: col.Collapsed,
+					// Style:     col.Style
+				})
 		}
-		worksheet.Cols.Col = append(worksheet.Cols.Col,
-			xlsxCol{Min: col.Min,
-				Max:       col.Max,
-				Hidden:    col.Hidden,
-				Width:     col.Width,
-				Collapsed: col.Collapsed,
-				// Style:     col.Style
-			})
 	}
+
 	worksheet.SheetData = xSheet
 	dimension := xlsxDimension{}
 	dimension.Ref = fmt.Sprintf("A1:%s%d",
@@ -176,5 +238,6 @@ func (s *Sheet) makeXLSXSheet(refTable *RefTable, styles *xlsxStyleSheet) *xlsxW
 		dimension.Ref = "A1"
 	}
 	worksheet.Dimension = dimension
+	worksheet.Drawing.SetId(1)
 	return worksheet
 }

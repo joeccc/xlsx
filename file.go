@@ -19,6 +19,7 @@ type File struct {
 	Sheets         []*Sheet
 	Sheet          map[string]*Sheet
 	theme          *theme
+	Drawings       [][]Drawing
 }
 
 // Create a new File
@@ -26,6 +27,7 @@ func NewFile() (file *File) {
 	file = &File{}
 	file.Sheet = make(map[string]*Sheet)
 	file.Sheets = make([]*Sheet, 0)
+	file.Drawings = make([][]Drawing, 0)
 	return
 }
 
@@ -163,12 +165,14 @@ func (f *File) MarshallParts() (map[string]string, error) {
 		if err != nil {
 			return "", err
 		}
-		return xml.Header + string(body), nil
+		// return xml.Header + string(body), nil
+		return `<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>` + "\n" + string(body), nil
 	}
 
 	parts = make(map[string]string)
 	workbook = f.makeWorkbook()
 	sheetIndex := 1
+	drawingCount := 0
 
 	if f.styles == nil {
 		f.styles = newXlsxStyleSheet(f.theme)
@@ -195,6 +199,91 @@ func (f *File) MarshallParts() (map[string]string, error) {
 		if err != nil {
 			return parts, err
 		}
+
+		xDrawing := newXlsxDrawing()
+		xDrawingRel := newXlsxDrawingRelationships()
+
+		colWidths := make([]float64, sheet.MaxCol)
+		for _, col := range sheet.Cols {
+			for i := col.Min - 1; i < col.Max; i++ {
+				colWidths[i] = col.Width
+			}
+		}
+
+		for _, drawing := range sheet.Drawings {
+			drawingCount++
+			var imageExt string
+			switch drawing.ImageType {
+			case IMAGE_TYPE_JPG:
+				imageExt = IMAGE_EXT_JPG
+			case IMAGE_TYPE_GIF:
+				imageExt = IMAGE_EXT_GIF
+			case IMAGE_TYPE_PNG:
+				imageExt = IMAGE_EXT_PNG
+			}
+			imageName := fmt.Sprintf("image%d%s", drawingCount, imageExt)
+			parts[fmt.Sprintf("xl/media/%s", imageName)] = string(drawing.ImageData)
+			// TODO - calculate the bottom right cell location and offset
+			var toCol, toColOff, toRow, toRowOff int
+			if drawing.RowCount > 0 && drawing.ColCount > 0 {
+				toCol = drawing.TopLeftCell.ColNum + drawing.ColCount
+				toRow = drawing.TopLeftCell.RowNum + drawing.RowCount
+			} else if drawing.RowCount > 0 {
+				toRow = drawing.TopLeftCell.RowNum + drawing.RowCount
+				targetHeightInPixel := PixelPerUnitHeight * UnitHeightPerCell * float64(drawing.RowCount)
+				targetWidthInPixel := float64(drawing.Width) / float64(drawing.Height) * targetHeightInPixel
+				targeWidth := targetWidthInPixel / PixelPerUnitWidth * NumberPerUnitWidth
+				colIndex := drawing.TopLeftCell.ColNum
+				for targeWidth >= colWidths[colIndex]*NumberPerUnitWidth {
+					targeWidth -= colWidths[colIndex] * NumberPerUnitWidth
+					colIndex++
+				}
+				toCol = colIndex
+				toColOff = int(targeWidth)
+			} else {
+				toCol = drawing.TopLeftCell.ColNum + drawing.ColCount
+				targetWidthInPixel := float64(0)
+				for colIndex := drawing.TopLeftCell.ColNum; colIndex < toCol; colIndex++ {
+					targetWidthInPixel += colWidths[colIndex] * PixelPerUnitWidth
+				}
+				targetHeightInPixel := float64(drawing.Height) / float64(drawing.Width) * targetWidthInPixel
+				targetHeight := targetHeightInPixel / PixelPerUnitHeight * NumberPerUnitHeight
+				rowIndex := drawing.TopLeftCell.RowNum
+				fmt.Println(targetHeight)
+				for targetHeight >= UnitHeightPerCell*NumberPerUnitHeight {
+					targetHeight -= UnitHeightPerCell * NumberPerUnitHeight
+					rowIndex++
+				}
+				toRow = rowIndex
+				toRowOff = int(targetHeight)
+				fmt.Println(targetHeight, rowIndex)
+			}
+			embedId := xDrawingRel.AddDrawingRelationship(imageName)
+			xDrawing.AddDrawingTwoCellAnchor(drawing.TopLeftCell.ColNum, 0, drawing.TopLeftCell.RowNum, 0, toCol, toColOff, toRow, toRowOff, embedId)
+		}
+
+		drawingXML := fmt.Sprintf("drawing%d.xml", sheetIndex)
+		drawingPartName := fmt.Sprintf("xl/drawings/%s", drawingXML)
+		types.Overrides = append(
+			types.Overrides,
+			xlsxOverride{
+				PartName:    "/" + drawingPartName,
+				ContentType: "application/vnd.openxmlformats-officedocument.drawing+xml"})
+		parts[fmt.Sprintf("xl/drawings/_rels/%s.rels", drawingXML)], err = marshal(xDrawingRel)
+		if err != nil {
+			return parts, err
+		}
+		parts[drawingPartName], err = marshal(xDrawing)
+		if err != nil {
+			return parts, err
+		}
+		xSheetRelationships := newXlsxWorksheetRelationships()
+		xSheetRelationships.AddWorksheetDrawingRelationship(drawingXML)
+		parts[fmt.Sprintf("xl/worksheets/_rels/sheet%d.xml.rels", sheetIndex)], err = marshal(xSheetRelationships)
+		if err != nil {
+			return parts, err
+		}
+
 		sheetIndex++
 	}
 
